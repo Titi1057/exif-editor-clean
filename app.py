@@ -6,7 +6,6 @@ import folium
 from streamlit_folium import st_folium
 
 # --- Fonctions utilitaires pour EXIF ---
-
 def to_str(value):
     if isinstance(value, bytes):
         try:
@@ -112,6 +111,12 @@ if uploaded_file:
     if 'GPS' not in exif_dict:
         exif_dict['GPS'] = {}
 
+    # Initialisation session_state lat/lon s'ils n'existent pas
+    if 'lat' not in st.session_state:
+        st.session_state.lat = get_gps_coord(exif_dict, piexif.GPSIFD.GPSLatitudeRef, piexif.GPSIFD.GPSLatitude)
+    if 'lon' not in st.session_state:
+        st.session_state.lon = get_gps_coord(exif_dict, piexif.GPSIFD.GPSLongitudeRef, piexif.GPSIFD.GPSLongitude)
+
     st.subheader("📝 Formulaire de modification EXIF")
 
     with st.form("exif_form"):
@@ -122,7 +127,6 @@ if uploaded_file:
             new_exif[ifd] = {}
 
             for tag, value in exif_dict[ifd].items():
-                # On cache les tags GPS qu'on gère dans la section GPS dédiée
                 if ifd == "GPS" and tag in (
                     piexif.GPSIFD.GPSLatitude,
                     piexif.GPSIFD.GPSLongitude,
@@ -135,10 +139,9 @@ if uploaded_file:
                 new_val = st.text_input(f"{tag_name} ({ifd})", val_str)
                 new_exif[ifd][tag] = (new_val, value)
 
-        st.markdown("### Modification des coordonnées GPS")
-
-        lat = st.number_input("Latitude (décimale)", value=get_gps_coord(exif_dict, piexif.GPSIFD.GPSLatitudeRef, piexif.GPSIFD.GPSLatitude))
-        lon = st.number_input("Longitude (décimale)", value=get_gps_coord(exif_dict, piexif.GPSIFD.GPSLongitudeRef, piexif.GPSIFD.GPSLongitude))
+        # Inputs GPS liés au session_state
+        lat = st.number_input("Latitude (décimale)", value=st.session_state.lat)
+        lon = st.number_input("Longitude (décimale)", value=st.session_state.lon)
 
         submitted = st.form_submit_button("💾 Enregistrer les modifications")
 
@@ -148,7 +151,12 @@ if uploaded_file:
                 user_val_str, original_val = new_exif[ifd][tag]
                 exif_dict[ifd][tag] = from_str(user_val_str, original_val)
 
+        # Met à jour exif_dict avec nouvelles coordonnées GPS
         exif_dict = set_gps_coords(exif_dict, lat, lon)
+
+        # Met à jour session_state avec les nouvelles coordonnées
+        st.session_state.lat = lat
+        st.session_state.lon = lon
 
         try:
             exif_bytes = piexif.dump(exif_dict)
@@ -159,18 +167,23 @@ if uploaded_file:
         output_buffer = io.BytesIO()
         image.save(output_buffer, format="JPEG", exif=exif_bytes)
 
+        # Stocke le résultat dans session_state pour garder le bouton visible
+        st.session_state['image_modifiee'] = output_buffer.getvalue()
+
         st.success("✅ Métadonnées mises à jour avec succès !")
 
+    # Affiche toujours le bouton de téléchargement si image modifiée existe
+    if 'image_modifiee' in st.session_state:
         st.download_button(
             label="⬇️ Télécharger l'image modifiée avec EXIF",
-            data=output_buffer.getvalue(),
+            data=st.session_state['image_modifiee'],
             file_name="image_modifiee.jpg",
             mime="image/jpeg"
         )
 
-        # Affichage de la carte avec Folium
-        if lat != 0.0 and lon != 0.0:
-            m = folium.Map(location=[lat, lon], zoom_start=12)
-            folium.Marker([lat, lon], tooltip="Position GPS modifiée").add_to(m)
-            st.subheader("📍 Position GPS sur la carte")
-            st_folium(m, width=700, height=500)
+    # Affichage de la carte avec coordonnées en session_state
+    if st.session_state.lat != 0.0 and st.session_state.lon != 0.0:
+        m = folium.Map(location=[st.session_state.lat, st.session_state.lon], zoom_start=12)
+        folium.Marker([st.session_state.lat, st.session_state.lon], tooltip="Position GPS modifiée").add_to(m)
+        st.subheader("📍 Position GPS sur la carte")
+        st_folium(m, width=700, height=500)
