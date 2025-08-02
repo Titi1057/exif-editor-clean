@@ -5,31 +5,74 @@ import io
 import folium
 from streamlit_folium import st_folium
 
-# Fonction pour convertir décimal en rationnel EXIF (num, den)
+# --- Fonctions utilitaires pour EXIF ---
+
+def to_str(value):
+    if isinstance(value, bytes):
+        try:
+            return value.decode('utf-8')
+        except:
+            return str(value)
+    elif isinstance(value, tuple):
+        try:
+            if all(isinstance(x, tuple) and len(x) == 2 for x in value):
+                return ", ".join([f"{n}/{d}" for n, d in value])
+            elif len(value) == 2 and all(isinstance(x, int) for x in value):
+                n, d = value
+                return f"{n}/{d}"
+            else:
+                return str(value)
+        except:
+            return str(value)
+    else:
+        return str(value)
+
+def from_str(value, original):
+    try:
+        if isinstance(original, bytes):
+            return value.encode('utf-8')
+        elif isinstance(original, tuple):
+            parts = value.split(',')
+            rationals = []
+            for part in parts:
+                part = part.strip()
+                if '/' in part:
+                    n, d = part.split('/')
+                    rationals.append((int(n), int(d)))
+                else:
+                    rationals.append((int(part), 1))
+            if len(rationals) == 1:
+                return rationals[0]
+            else:
+                return tuple(rationals)
+        elif isinstance(original, int):
+            return int(value)
+        else:
+            return value
+    except:
+        return value
+
 def to_rational(number):
-    precision = 1000000  # 6 décimales
+    precision = 1000000
     numerator = int(number * precision)
     denominator = precision
     return (numerator, denominator)
 
-# Convertir coordonnées GPS décimales en format EXIF
 def decimal_to_dms(decimal_coord):
     degrees = int(abs(decimal_coord))
     minutes = int((abs(decimal_coord) - degrees) * 60)
-    seconds = (abs(decimal_coord) - degrees - minutes/60) * 3600
+    seconds = (abs(decimal_coord) - degrees - minutes / 60) * 3600
     return (
         to_rational(degrees),
         to_rational(minutes),
         to_rational(seconds)
     )
 
-# Déterminer le tag de référence N/S ou E/W
 def gps_ref(latitude, longitude):
     lat_ref = 'N' if latitude >= 0 else 'S'
     lon_ref = 'E' if longitude >= 0 else 'W'
     return lat_ref.encode(), lon_ref.encode()
 
-# Ajout/modification des coordonnées GPS dans les EXIF
 def set_gps_coords(exif_dict, lat, lon):
     exif_dict['GPS'][piexif.GPSIFD.GPSLatitudeRef] = gps_ref(lat, lon)[0]
     exif_dict['GPS'][piexif.GPSIFD.GPSLatitude] = decimal_to_dms(lat)
@@ -37,7 +80,21 @@ def set_gps_coords(exif_dict, lat, lon):
     exif_dict['GPS'][piexif.GPSIFD.GPSLongitude] = decimal_to_dms(lon)
     return exif_dict
 
-# Ton code existant, avec ajout de cette partie dans le formulaire :
+def get_gps_coord(exif_dict, key_ref, key_coord):
+    try:
+        ref = exif_dict['GPS'][key_ref].decode()
+        d, m, s = exif_dict['GPS'][key_coord]
+        coord = d[0] / d[1] + m[0] / (60 * m[1]) + s[0] / (3600 * s[1])
+        if ref in ['S', 'W']:
+            coord = -coord
+        return coord
+    except:
+        return 0.0
+
+# --- Interface Streamlit ---
+
+st.set_page_config(page_title="Éditeur EXIF complet", layout="centered")
+st.title("🖼️ Éditeur complet des métadonnées EXIF")
 
 uploaded_file = st.file_uploader("Choisissez une image JPEG", type=["jpg", "jpeg"])
 
@@ -52,7 +109,6 @@ if uploaded_file:
         st.error(f"Erreur lors du chargement des métadonnées EXIF: {e}")
         st.stop()
 
-    # Initialisation section GPS si absente
     if 'GPS' not in exif_dict:
         exif_dict['GPS'] = {}
 
@@ -60,17 +116,19 @@ if uploaded_file:
 
     with st.form("exif_form"):
         new_exif = {}
-
         for ifd in exif_dict:
             if ifd == "thumbnail":
                 continue
-            st.markdown(f"### Section {ifd}")
             new_exif[ifd] = {}
 
             for tag, value in exif_dict[ifd].items():
-                # On ne montre pas les tags GPS ici car on les modifie via un formulaire dédié
-                if ifd == "GPS" and tag in (piexif.GPSIFD.GPSLatitude, piexif.GPSIFD.GPSLongitude,
-                                            piexif.GPSIFD.GPSLatitudeRef, piexif.GPSIFD.GPSLongitudeRef):
+                # On cache les tags GPS qu'on gère dans la section GPS dédiée
+                if ifd == "GPS" and tag in (
+                    piexif.GPSIFD.GPSLatitude,
+                    piexif.GPSIFD.GPSLongitude,
+                    piexif.GPSIFD.GPSLatitudeRef,
+                    piexif.GPSIFD.GPSLongitudeRef,
+                ):
                     continue
                 tag_name = piexif.TAGS[ifd][tag]["name"]
                 val_str = to_str(value)
@@ -78,20 +136,9 @@ if uploaded_file:
                 new_exif[ifd][tag] = (new_val, value)
 
         st.markdown("### Modification des coordonnées GPS")
-        # Récupérer valeurs GPS existantes si présentes, sinon 0
-        def get_gps_coord(key_ref, key_coord):
-            try:
-                ref = exif_dict['GPS'][key_ref].decode()
-                d, m, s = exif_dict['GPS'][key_coord]
-                coord = d[0]/d[1] + m[0]/(60*m[1]) + s[0]/(3600*s[1])
-                if ref in ['S', 'W']:
-                    coord = -coord
-                return coord
-            except:
-                return 0.0
 
-        lat = st.number_input("Latitude (décimale)", value=get_gps_coord(piexif.GPSIFD.GPSLatitudeRef, piexif.GPSIFD.GPSLatitude))
-        lon = st.number_input("Longitude (décimale)", value=get_gps_coord(piexif.GPSIFD.GPSLongitudeRef, piexif.GPSIFD.GPSLongitude))
+        lat = st.number_input("Latitude (décimale)", value=get_gps_coord(exif_dict, piexif.GPSIFD.GPSLatitudeRef, piexif.GPSIFD.GPSLatitude))
+        lon = st.number_input("Longitude (décimale)", value=get_gps_coord(exif_dict, piexif.GPSIFD.GPSLongitudeRef, piexif.GPSIFD.GPSLongitude))
 
         submitted = st.form_submit_button("💾 Enregistrer les modifications")
 
@@ -101,7 +148,6 @@ if uploaded_file:
                 user_val_str, original_val = new_exif[ifd][tag]
                 exif_dict[ifd][tag] = from_str(user_val_str, original_val)
 
-        # Mettre à jour les coordonnées GPS
         exif_dict = set_gps_coords(exif_dict, lat, lon)
 
         try:
