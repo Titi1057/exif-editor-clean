@@ -187,3 +187,28 @@ if uploaded_file:
         folium.Marker([st.session_state.lat, st.session_state.lon], tooltip="Position GPS modifiée").add_to(m)
         st.subheader("📍 Position GPS sur la carte")
         st_folium(m, width=700, height=500)
+
+    # Liste des lieux visités ou destinations de rêve (latitude, longitude, nom)
+    pois = [
+        (48.8566, 2.3522, "Paris"),
+        (51.5074, -0.1278, "Londres"),
+        (40.7128, -74.0060, "New York"),
+        (35.6895, 139.6917, "Tokyo"),
+        (37.7749, -122.4194, "San Francisco")
+    ]
+
+    # Carte pour afficher tous les POI liés
+    if pois:
+        # Centrage sur le premier POI
+        m2 = folium.Map(location=[pois[0][0], pois[0][1]], zoom_start=2)
+
+        # Ajout des marqueurs
+        for lat_poi, lon_poi, name in pois:
+            folium.Marker([lat_poi, lon_poi], tooltip=name).add_to(m2)
+
+        # Relier les POI entre eux par une ligne
+        coords = [(lat, lon) for lat, lon, _ in pois]
+        folium.PolyLine(coords, color="blue", weight=2.5, opacity=0.8).add_to(m2)
+
+        st.subheader("🌍 Vos lieux visités / destinations de rêve")
+        st_folium(m2, width=700, height=500)
